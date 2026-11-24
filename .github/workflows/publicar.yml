@@ -1,0 +1,67 @@
+# Arma el instalador en Windows y lo publica como version descargable cuando cambia la version
+# (holi/__init__.py). Si esa version ya estaba publicada, no hace nada.
+name: Publicar instalador
+
+on:
+  push:
+    branches: [main]
+    paths: ["holi/__init__.py"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Version
+        id: v
+        shell: bash
+        run: echo "version=$(python -c 'import holi; print(holi.__version__)')" >> "$GITHUB_OUTPUT"
+
+      - name: Ya estaba publicada
+        id: ya
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.v.outputs.version }}" >/dev/null 2>&1; then echo "si=1" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Dependencias
+        if: steps.ya.outputs.si != '1'
+        run: python -m pip install -r requirements.txt pyinstaller pillow
+
+      - name: Icono
+        if: steps.ya.outputs.si != '1'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tools/make_icon.py
+
+      - name: Aplicacion
+        if: steps.ya.outputs.si != '1'
+        run: >
+          python -m PyInstaller --noconfirm --clean --onedir --windowed
+          --name HoliLite --icon "$PWD\assets\blob.ico"
+          --distpath app_build --workpath build_app --specpath build_app
+          "$PWD\main.py"
+
+      - name: Instalador
+        if: steps.ya.outputs.si != '1'
+        run: python tools/make_setup.py
+
+      - name: Publicar
+        if: steps.ya.outputs.si != '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          gh release create "v$v" "entregar/HoliLite-Setup-$v.exe" --title "Holi Lite $v" \
+            --notes "Descarga **HoliLite-Setup-$v.exe**, ábrelo y listo. Si ya lo tenías, se actualiza y tus planetas se mantienen. Windows puede mostrar \"Windows protegió su PC\": toca \"Más información\" y \"Ejecutar de todas formas\"."
