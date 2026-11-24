@@ -128,6 +128,15 @@ class BlobModel:
         self.cuddle_cd = 0.0
         self.align_t = 0.0            # planetas alineados (segundos restantes)
         self.dance_t = 0.0            # bailecito (segundos restantes)
+        self.music = 0.0              # cuanto suena el PC (0..1, lo pone el controlador)
+        self.music_phase = 0.0
+        self.beat = False             # golpe del ritmo (lo pone el controlador, se consume aqui)
+        self.food_on = False          # tiene hambre: aparece una estrellita para arrastrarle a la boca
+        self.food = None              # {"x","y" relativos a Holi, "drag", "t"} o None
+        self.pulse = 0.0              # los planetas laten con el ritmo (1 = recien golpeo)
+        self.xmas = False             # diciembre: estrella en la punta del primer planeta
+        self.snow_t = 0.0             # segundos de nieve que quedan
+        self.fireworks_t = 0.0        # segundos de fuegos artificiales que quedan
         self.boot_t = 0.0             # segundos desde que se abrio (planetas aparecen uno por uno)
         self.spin_t = 0.0             # segundos desde el ultimo "saludo" girando los planetas
         self.swallow_t = -1.0         # broma: se traga los planetas y los escupe (-1 = no)
@@ -542,7 +551,57 @@ class BlobModel:
         self._face(dt, dx, dy, dist, near)
         self.gulp_t = max(0.0, self.gulp_t - dt)
         self._mouth(dt)
+        self._food(dt)
         self.fx.update(self, dt)
+
+    # ------------------------------------------------------------ estrellita de comida
+    FOOD_REST = (2.0, -0.35)          # donde espera la estrellita (en radios, al lado de Holi)
+
+    def _food(self, dt):
+        if self.food_on and self.food is None:
+            self.food = {"x": self.R * self.FOOD_REST[0], "y": self.R * self.FOOD_REST[1], "drag": False, "t": 0.0}
+        elif not self.food_on and self.food is not None and not self.food["drag"]:
+            self.food = None
+        f = self.food
+        if not f:
+            return
+        f["t"] += dt
+        if f["drag"]:
+            self.glance_at(self.x + f["x"], self.y + f["y"], 0.3)
+            self.feel("excited", 0.3)
+        else:                                  # vuelve a su lugar si la soltaste lejos
+            k = min(1.0, dt * 8.0)
+            f["x"] += (self.R * self.FOOD_REST[0] - f["x"]) * k
+            f["y"] += (self.R * self.FOOD_REST[1] - f["y"]) * k
+
+    def food_hit(self, gx, gy):
+        f = self.food
+        return bool(f) and math.hypot(gx - self.x - f["x"], gy - self.y - f["y"]) <= self.R * 0.5
+
+    def food_grab(self):
+        if self.food:
+            self.food["drag"] = True
+            if self.asleep and not self.napping:
+                self._wake()
+
+    def food_move(self, gx, gy):
+        f = self.food
+        if f and f["drag"]:
+            lim = self.R * 3.1                  # que no salga de la ventana de Holi
+            f["x"] = clamp(gx - self.x, -lim, lim)
+            f["y"] = clamp(gy - self.y, -lim, lim)
+
+    def food_drop(self):
+        """True si la soltaste en su boca."""
+        f = self.food
+        if not f or not f["drag"]:
+            return False
+        f["drag"] = False
+        if math.hypot(f["x"], f["y"] - self.R * 0.25) < self.R * 1.05:
+            self.food = None
+            self.food_on = False
+            return True
+        return False
 
     # ============================================================ internals
     def _touch(self, soft=False):
@@ -1036,6 +1095,15 @@ class BlobModel:
             lean += math.sin(self.t * 7.0) * 0.12
         lean += 0.12 * self.expr["curious"]       # ladea la cabeza cuando tiene curiosidad
         lean += 0.2 * self.expr["puzzled"]        # extranado: cabeza bien ladeada
+        if self.music > 0.03 and not self.asleep and self.mode in (self.IDLE, self.PERCH, self.WANDER):
+            self.music_phase += dt * (2.4 + 1.6 * self.music)      # se mece con lo que suena
+            lean += math.sin(self.music_phase * 2.0) * 0.11 * min(1.0, self.music * 2.5)
+            if self.beat:
+                self.hop.impulse(-35 - 75 * self.music)
+                self.squash.impulse(2.5 + 3.0 * self.music)
+                self.pulse = 1.0
+        self.beat = False
+        self.pulse = max(0.0, self.pulse - dt * 4.0)
         if self.dance_t > 0:                      # bailecito
             self.dance_t -= dt
             lean += math.sin(self.t * 9.0) * 0.16
@@ -1216,6 +1284,8 @@ class BlobModel:
             "hat": self.hat,
             "mouth": (self.mouth_shape, self.mouth_open) if self.mouth_shape else None,
             "lumps": self._lumps(),
+            "food": (self.food["x"], self.food["y"], self.food["t"], self.food["drag"]) if self.food else None,
             "orbit": (dict(self.orbit, phase=self.orbit_phase, align=self._align_amount(), appear=self.boot_t,
-                           swallow=self.swallow_t, mouth=self.mouth_pos) if self.orbit else None),
+                           swallow=self.swallow_t, mouth=self.mouth_pos, pulse=self.pulse, xmas=self.xmas)
+                      if self.orbit else None),
         }

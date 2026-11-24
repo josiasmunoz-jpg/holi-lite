@@ -9,7 +9,7 @@ from PySide6.QtGui import (QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap
                            QRadialGradient, QTransform)
 
 from . import config as C
-from .fx import draw_disk, draw_hat, draw_orbit, draw_particles
+from .fx import draw_disk, draw_food, draw_hat, draw_orbit, draw_particles
 
 
 def body_path(R, wobble, t, n=48, lumps=None):
@@ -291,6 +291,7 @@ def draw_blob(p: QPainter, pose, cx, cy, shadow=True, rim_alpha=None):
     draw_disk(p, fx, cx, cy + lift, R, front=True)
     draw_orbit(p, orbit, cx, cy + lift, R, front=True)
     draw_particles(p, fx, cx, cy + lift, R, body_color)
+    draw_food(p, pose.get("food"), cx, cy, R)
 
 
 def default_pose(R):

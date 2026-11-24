@@ -472,6 +472,16 @@ def _draw_icon(p, name, col, color=None):
         p.setBrush(Qt.NoBrush)
         p.drawArc(QRectF(-2, -5, 8, 10), -50 * 16, 100 * 16)
         p.drawArc(QRectF(-2, -9, 13, 18), -50 * 16, 100 * 16)
+    elif name == "music":                      # corchea doble
+        p.setPen(Qt.NoPen)
+        p.setBrush(col)
+        p.drawEllipse(QPointF(-5, 6), 3.6, 2.8)
+        p.drawEllipse(QPointF(6, 4), 3.6, 2.8)
+        p.setPen(_pen(col, 1.8))
+        p.drawLine(QPointF(-1.6, 6), QPointF(-1.6, -7))
+        p.drawLine(QPointF(9.4, 4), QPointF(9.4, -9))
+        p.setPen(_pen(col, 3.0))
+        p.drawLine(QPointF(-1.6, -7), QPointF(9.4, -9))
     elif name == "hat":
         path = QPainterPath(QPointF(-9, 7))
         path.lineTo(QPointF(0, -9))

@@ -62,6 +62,16 @@ class Particles:
             p.update(x=R * 0.75, y=-R * 1.0, vx=R * 0.08, vy=-R * 0.22, life=2.2, s=R * 0.5, ph=0)
         elif kind == "gift":                   # estrellita de regalo: aparece, flota y brilla
             p.update(x=R * 0.9, y=-R * 0.9, vx=R * 0.05, vy=-R * 0.25, life=2.8, s=R * 0.26, ph=random.random() * 6)
+        elif kind == "snow":                   # copo: cae en toda la ventana, meciendose
+            p.update(x=random.uniform(-3.2, 3.2) * R, y=-3.4 * R, vx=random.uniform(-0.1, 0.1) * R,
+                     vy=R * random.uniform(0.7, 1.1), life=6.5, s=R * random.uniform(0.035, 0.07),
+                     ph=random.random() * 6)
+        elif kind == "fw":                     # chispa de fuego artificial (cae un poco)
+            a = kw.get("a", random.uniform(0, 2 * math.pi))
+            sp = R * random.uniform(1.4, 2.0)
+            at = kw.get("at", (0.0, -2.0))
+            p.update(x=at[0] * R, y=at[1] * R, vx=math.cos(a) * sp, vy=math.sin(a) * sp,
+                     life=random.uniform(0.9, 1.3), s=R * 0.06, ph=0)
         elif kind == "spark":
             a = kw.get("a", random.uniform(0, 2 * math.pi))
             sp = kw.get("sp", R * random.uniform(1.6, 2.6))
@@ -69,8 +79,8 @@ class Particles:
                      life=0.55, s=R * 0.07, ph=0)
         p.update(kw.get("extra", {}))
         self.items.append(p)
-        if len(self.items) > 60:
-            del self.items[:-60]
+        if len(self.items) > 120:
+            del self.items[:-120]
 
     def burst(self, R, n=14):
         for i in range(n):
@@ -87,12 +97,28 @@ class Particles:
             self.emit("sweat", R)
         if e["angry"] > 0.5 and self._every("puff", 0.28, dt):
             self.emit("puff", R)
+        if m.snow_t > 0:
+            m.snow_t = max(0.0, m.snow_t - dt)
+            if self._every("snow", 0.16, dt):
+                self.emit("snow", R)
+        if m.fireworks_t > 0:
+            m.fireworks_t = max(0.0, m.fireworks_t - dt)
+            if self._every("fw", 0.55, dt):
+                at = (random.uniform(-2.4, 2.4), random.uniform(-2.9, -1.6))
+                n = 18
+                for i in range(n):
+                    self.emit("fw", R, at=at, a=2 * math.pi * i / n + random.uniform(-0.1, 0.1))
         for p in self.items:
             p["t"] += dt
             p["x"] += p["vx"] * dt
             p["y"] += p["vy"] * dt
             if p["k"] == "sweat":
                 p["vy"] += R * 2.2 * dt
+            elif p["k"] == "snow":
+                p["x"] += math.sin(p["t"] * 1.7 + p["ph"]) * R * 0.25 * dt
+            elif p["k"] == "fw":
+                p["vx"] *= math.exp(-2.5 * dt)
+                p["vy"] = p["vy"] * math.exp(-2.5 * dt) + R * 0.9 * dt
             elif p["k"] in ("spark", "pop"):
                 p["vx"] *= math.exp(-4 * dt)
                 p["vy"] *= math.exp(-4 * dt)
@@ -250,6 +276,21 @@ def draw_particles(painter, fx, cx, cy, R, body_color=QColor(16, 16, 18)):
             _bw(painter, a, body_color, 1.0)
             painter.drawEllipse(QPointF(x, y), p["s"] * 1.2, p["s"] * 1.2)
             painter.setPen(Qt.NoPen)
+        elif k == "snow":
+            c = QColor(250, 250, 252)
+            c.setAlphaF(0.9 * min(1.0, (p["life"] - p["t"]) / 0.8))
+            painter.setPen(QPen(QColor(40, 40, 46, int(120 * c.alphaF())), 0.8))
+            painter.setBrush(c)
+            painter.drawEllipse(QPointF(x, y), p["s"], p["s"])
+            painter.setPen(Qt.NoPen)
+        elif k == "fw":
+            q = p["t"] / p["life"]
+            c = QColor(255, 255, 255)
+            c.setAlphaF(max(0.0, 1.0 - q) ** 0.7)
+            painter.setPen(QPen(QColor(20, 20, 24, int(150 * c.alphaF())), 0.8))
+            painter.setBrush(c)
+            painter.drawEllipse(QPointF(x, y), p["s"] * (1.2 - 0.6 * q), p["s"] * (1.2 - 0.6 * q))
+            painter.setPen(Qt.NoPen)
 
     # globito con lo que necesita (estrellita = hambre, luna = sueño)
     want = fx.get("want")
@@ -404,6 +445,9 @@ def draw_orbit(painter, orbit, cx, cy, R, front):
             r *= k * (1.0 + 0.25 * math.sin(k * math.pi))          # crecen con un pequeno rebote
         if i == last and pop > 0:
             r *= 1.0 + 0.35 * math.sin(min(1.0, pop / 2.5) * math.pi)
+        beat = orbit.get("pulse", 0.0)
+        if beat > 0:
+            r *= 1.0 + 0.28 * beat * beat
         if trail is not None:                    # estela del movimiento
             dxt, dyt = trail[0] - x, trail[1] - y
             dl = math.hypot(dxt, dyt)
@@ -442,6 +486,36 @@ def draw_orbit(painter, orbit, cx, cy, R, front):
             painter.setPen(edge)
             painter.setBrush(moon_col)
             painter.drawEllipse(QPointF(moon[0], moon[1]), moon[2], moon[2])
+        if i == 0 and orbit.get("xmas") and phase == "orbit":    # diciembre: arbolito con su estrella
+            painter.save()
+            painter.translate(x, y - r * 1.55)
+            painter.rotate(12 + math.sin(t * 2.0) * 8)
+            _bw(painter, 1.0, QColor(16, 16, 18), 1.0)
+            painter.drawPath(star_path(max(2.6, r * 0.75)))
+            painter.restore()
+            painter.setPen(edge)
+    painter.restore()
+
+
+def draw_food(painter, food, cx, cy, R):
+    """Estrellita de comida al lado de Holi cuando tiene hambre: arrastrala a su boca."""
+    if not food:
+        return
+    fx_, fy, t, drag = food
+    grow = min(1.0, t / 0.4)
+    s = R * 0.3 * grow * (1.15 if drag else 1.0 + 0.08 * math.sin(t * 5))
+    if s < 0.5:
+        return
+    painter.save()
+    painter.translate(cx + fx_, cy + fy + (0 if drag else math.sin(t * 2.2) * R * 0.06))
+    g = QColor(255, 255, 255)
+    g.setAlphaF(0.22 + 0.1 * math.sin(t * 4))
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(g)
+    painter.drawEllipse(QPointF(0, 0), s * 1.6, s * 1.6)
+    painter.rotate(t * (160 if drag else 25))
+    _bw(painter, 1.0, QColor(16, 16, 18), 1.4)
+    painter.drawPath(star_path(s))
     painter.restore()
 
 

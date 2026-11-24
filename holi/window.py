@@ -21,6 +21,7 @@ class BlobWindow(QWidget):
     context_menu_requested = Signal(object)   # QPoint global
     clicked = Signal()
     double_clicked = Signal()
+    food_fed = Signal()                       # le llevaste la estrellita a la boca
 
     def __init__(self, model: BlobModel, on_top=True):
         super().__init__(None)
@@ -63,12 +64,19 @@ class BlobWindow(QWidget):
 
     def mousePressEvent(self, e):
         g = e.globalPosition()
-        if e.button() in (Qt.LeftButton, Qt.RightButton) and self._on_body(g.x(), g.y()):
+        if e.button() == Qt.LeftButton and self.model.food_hit(g.x(), g.y()):
+            self.model.food_grab()             # la estrellita de comida se agarra antes que Holi
+        elif e.button() in (Qt.LeftButton, Qt.RightButton) and self._on_body(g.x(), g.y()):
             self.model.press(g.x(), g.y())
         e.accept()
 
     def mouseMoveEvent(self, e):
         g = e.globalPosition()
+        if self.model.food and self.model.food["drag"]:
+            self.model.food_move(g.x(), g.y())
+            self.update()
+            e.accept()
+            return
         self.model.move_pointer(g.x(), g.y())
         if self.paused and self.model.mode == BlobModel.DRAG:
             self.model.x, self.model.y = self.model.drag_target     # pausado igual se puede mover
@@ -85,6 +93,12 @@ class BlobWindow(QWidget):
             else:
                 self.model.pressing = False
                 self.context_menu_requested.emit(e.globalPosition().toPoint())
+            self.update()
+            e.accept()
+            return
+        if e.button() == Qt.LeftButton and self.model.food and self.model.food["drag"]:
+            if self.model.food_drop():
+                self.food_fed.emit()
             self.update()
             e.accept()
             return

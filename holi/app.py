@@ -15,6 +15,7 @@ from PySide6.QtCore import QElapsedTimer, QPoint, QPropertyAnimation, Qt, QTimer
 from PySide6.QtGui import QColor, QCursor, QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication, QColorDialog, QInputDialog, QSystemTrayIcon
 
+from . import audio
 from . import autostart
 from . import config as C
 from . import settings
@@ -94,6 +95,7 @@ class Controller:
         self.win = BlobWindow(self.main, C.S["on_top"])
         self.win.context_menu_requested.connect(lambda _pos: self.open_menu())
         self.win.double_clicked.connect(self._double_click)
+        self.win.food_fed.connect(self.feed)
 
         self.clock = QElapsedTimer()
         self.clock.start()
@@ -118,6 +120,14 @@ class Controller:
             seen = "menu,hunger,sleep,planet"
         self._tips_seen = set(str(seen or "").split(",")) - {""}
         self._work = 0.0                      # minutos seguidos usando el PC (para las pausas)
+        self._music_fast = 0.0                # nivel de lo que suena: rapido y promedio lento (para el ritmo)
+        self._music_slow = 0.0
+        self._beat_ago = 9.0
+        self._lull = []                       # cambios de direccion del mouse encima de Holi (canción de cuna)
+        self._lull_dir = 0
+        self._lull_x = None
+        self._snow_at = -1e9                  # ultima nevada (monotonic)
+        self._season_boot = True
         QTimer.singleShot(6000, lambda: self._tip_once("menu", "Clic derecho sobre mí: mi menú"))
 
         # aviso de version nueva (GitHub): al rato de abrir y despues cada 6 horas
@@ -256,6 +266,10 @@ class Controller:
         m.hour = hour
         hwnd = m.perch["hwnd"] if m.perch else m.perch_goal
         m.perch_rect = self._to_logical(self.probe.window_rect(hwnd)) if hwnd else None
+        self._music(dt_s)
+        self._lullaby(dt_s, cur)
+        n = self.needs
+        m.food_on = bool(n.hungry and not n.napping() and not self._menu_open)
         m.update(dt_s, cur, self.screens, idle=idle, keys=keys)
         for name in m.sfx:
             self.play(name)
@@ -263,6 +277,75 @@ class Controller:
             self.heart.event(ev)
         m.sfx.clear()
         m.events.clear()
+
+    def _music(self, dt_s):
+        """Holi se mece con lo que suena en el PC y salta con los golpes del ritmo."""
+        m = self.main
+        if not C.S.get("dance", True):
+            m.music = 0.0
+            return
+        lvl = audio.level()
+        self._music_fast = max(lvl, self._music_fast * math.exp(-dt_s * 6.0))
+        self._music_slow += (lvl - self._music_slow) * min(1.0, dt_s * 1.2)
+        self._beat_ago += dt_s
+        if lvl > 0.08 and lvl > self._music_slow * 1.35 and self._beat_ago >= 0.28:
+            self._beat_ago = 0.0
+            m.beat = True
+        target = min(1.0, self._music_slow * 2.2)
+        m.music += (target - m.music) * min(1.0, dt_s * (3.0 if target > m.music else 0.8))
+        if m.music > 0.25:
+            self._tip_once("dance", "Me gusta lo que suena")
+
+    def _lullaby(self, dt_s, cur):
+        """Mecer el mouse lento de lado a lado encima de Holi cuando tiene sueño lo hace dormir."""
+        m = self.main
+        mono = time.monotonic()
+        x, y = cur
+        near = abs(x - m.x) < m.R * 2.2 and abs(y - m.y) < m.R * 2.2 and m.mode != BlobModel.DRAG and not m.pressing
+        if not near or self._lull_x is None:
+            self._lull_x = x if near else None
+            self._lull_dir = 0
+            if not near:
+                self._lull.clear()
+            return
+        dx = x - self._lull_x
+        speed = abs(dx) / max(dt_s, 1e-3)
+        if abs(dx) >= 2:
+            d = 1 if dx > 0 else -1
+            if speed > 1600:                       # sacudirlo no es mecerlo
+                self._lull.clear()
+            elif d != self._lull_dir:
+                if self._lull_dir:
+                    self._lull.append(mono)
+                self._lull_dir = d
+            self._lull_x = x
+        self._lull = [t for t in self._lull if mono - t < 3.5]
+        if len(self._lull) >= 5:
+            self._lull.clear()
+            n = self.needs
+            if n.sleepy and not n.napping():
+                self.send_to_sleep()
+
+    def _season(self, now, step):
+        """Diciembre: estrella en el primer planeta y nieve un par de veces al dia. 1 de enero: fuegos artificiales."""
+        m = self.main
+        on = C.S.get("accessories", True)
+        m.xmas = on and now.month == 12
+        mono = time.monotonic()
+        if m.xmas and self._running() and mono - self._snow_at > 2 * 3600:
+            if self._season_boot or random.random() < step / (4 * 3600):
+                self._snow_at = mono
+                m.snow_t = 40.0
+        self._season_boot = False
+        if on and now.month == 1 and now.day == 1 and now.hour == 0 and now.minute < 3:
+            year = str(now.year)
+            if str(self.qs.value("fireworks_year") or "") != year and self._running():
+                self.qs.setValue("fireworks_year", year)
+                m.fireworks_t = 75.0
+                m.celebrate()
+                if self.tray:
+                    self.tray.showMessage(self.name(), "¡Feliz año nuevo!",
+                                          QSystemTrayIcon.MessageIcon.Information, 8000)
 
     def _update_heart(self):
         """Emociones propias: cambian solas con el tiempo y con lo que le haces."""
@@ -275,6 +358,7 @@ class Controller:
         self.heart.update(step, hour, m.since_interaction, m.asleep, m.typing, m.pet)
         feeling = self.heart.feeling(hour)
         m.hat = hat_for(now.date()) if C.S.get("accessories", True) else None
+        self._season(now, step)
         self._update_needs(step)
         self._unlocked_behaviors(step)
         stage, kind = self.needs.worst()
@@ -313,9 +397,9 @@ class Controller:
                 if stage:
                     m.reclaim(kind, stage)
                     if kind == "hunger":
-                        self._tip_once("hunger", "Tengo hambre.\nClic derecho y Comer")
+                        self._tip_once("hunger2", "Tengo hambre.\nLlévame la estrellita a la boca")
                     else:
-                        self._tip_once("sleep", "Tengo sueño.\nClic derecho y Dormir")
+                        self._tip_once("sleep2", "Tengo sueño.\nMece el mouse lento sobre mí")
             elif ev == "star":
                 if m.orbit is not None:
                     m.orbit["new"] = 2.5
@@ -775,7 +859,8 @@ class Controller:
             items += [
                 self._toggle_item("Sonidos", "sound", "voice", short="Sonidos"),
                 self._toggle_item("Recordarme pausas si llevo mucho rato sin parar", "break", "breaks", short="Pausas"),
-                self._toggle_item("Gorritos según la fecha", "hat", "accessories", short="Gorritos"),
+                self._toggle_item("Bailar con lo que suena en el PC", "music", "dance", short="Bailar"),
+                self._toggle_item("Gorritos, nieve y fiestas según la fecha", "hat", "accessories", short="Fechas"),
                 self._toggle_item("Posarse sobre las ventanas", "perch", "perch", short="Posarse"),
                 self._toggle_item("Ánimo según la hora del día", "clock", "time_mood", short="Ánimo por hora"),
                 self._toggle_item("Ocultarse con juegos y videos a pantalla completa", "fullscreen", "hide_fullscreen",

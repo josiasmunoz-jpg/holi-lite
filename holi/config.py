@@ -19,6 +19,7 @@ DEFAULTS = {
     "on_top": True,
     "name": "Holi",              # como se llama (se elige al instalar o en Opciones > Nombre)
     "voice": True,               # ruiditos
+    "dance": True,               # bailar con la musica que suena en el PC
     "breaks": False,             # recordarte pausas si llevas mucho rato sin parar (apagado de fabrica)
     "volume": 35,
     "pin": False,
